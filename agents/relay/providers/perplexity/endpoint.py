@@ -3,6 +3,7 @@ import json
 import os
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import PurePosixPath
 from typing import Any, Self
 
@@ -86,6 +87,11 @@ REQUEST_RETRY_ATTEMPTS = 12
 REQUEST_RETRY_INITIAL_BACKOFF_SEC = 1.0
 REQUEST_RETRY_MAX_BACKOFF_SEC = 60.0
 RETRYABLE_STATUS_CODES = frozenset({408, 409, 425, 429})
+
+try:
+    _WANDR_INTEGRATION = f"wandr/{version('relay')}"
+except PackageNotFoundError:
+    _WANDR_INTEGRATION = "wandr/0"
 
 
 @dataclass(frozen=True)
@@ -505,6 +511,8 @@ class PerplexityAgentAPIEndpoint:
         return {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
+            "User-Agent": _WANDR_INTEGRATION,
+            "X-Pplx-Integration": _WANDR_INTEGRATION,
         }
 
 
