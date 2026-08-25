@@ -42,6 +42,7 @@ from relay.providers.perplexity.files import (
     declared_perplexity_shared_files,
 )
 from relay.providers.request import validate_request_mapping
+
 try:
     import httpx
 except ImportError:  # pragma: no cover - exercised only without optional deps
@@ -86,6 +87,8 @@ REQUEST_RETRY_ATTEMPTS = 12
 REQUEST_RETRY_INITIAL_BACKOFF_SEC = 1.0
 REQUEST_RETRY_MAX_BACKOFF_SEC = 60.0
 RETRYABLE_STATUS_CODES = frozenset({408, 409, 425, 429})
+
+_WANDR_INTEGRATION = "wandr"
 
 
 @dataclass(frozen=True)
@@ -505,6 +508,8 @@ class PerplexityAgentAPIEndpoint:
         return {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
+            "User-Agent": _WANDR_INTEGRATION,
+            "X-Pplx-Integration": _WANDR_INTEGRATION,
         }
 
 
