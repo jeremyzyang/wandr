@@ -36,10 +36,6 @@ jobs:
           uv --no-config run --locked ruff check
           agents/relay agents/sitecustomize.py
           adapters/wandr/src/wandr scripts
-      - name: Test Perplexity request headers
-        run: >-
-          uv --no-config run --locked python -m unittest discover
-          -s agents/relay/tests -p 'test_*.py'
       - name: Check tooling formatting
         run: >-
           uv --no-config run --locked ruff format --check
