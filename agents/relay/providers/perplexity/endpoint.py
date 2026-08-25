@@ -3,7 +3,6 @@ import json
 import os
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import PurePosixPath
 from typing import Any, Self
 
@@ -43,6 +42,7 @@ from relay.providers.perplexity.files import (
     declared_perplexity_shared_files,
 )
 from relay.providers.request import validate_request_mapping
+
 try:
     import httpx
 except ImportError:  # pragma: no cover - exercised only without optional deps
@@ -88,10 +88,7 @@ REQUEST_RETRY_INITIAL_BACKOFF_SEC = 1.0
 REQUEST_RETRY_MAX_BACKOFF_SEC = 60.0
 RETRYABLE_STATUS_CODES = frozenset({408, 409, 425, 429})
 
-try:
-    _WANDR_INTEGRATION = f"wandr/{version('relay')}"
-except PackageNotFoundError:
-    _WANDR_INTEGRATION = "wandr/0"
+_WANDR_INTEGRATION = "wandr"
 
 
 @dataclass(frozen=True)
