@@ -8,27 +8,50 @@ import hashlib
 import json
 import re
 import shutil
-import tarfile
 import tempfile
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-import pyarrow.parquet as pq
 from datasets import load_dataset
-from huggingface_hub import DatasetCard
-
 from export import (
     EXPECTED_SCORED_NODES,
     EXPECTED_SMOKE_TASKS,
     EXPECTED_TEST_TASKS,
     EXPECTED_TREE_NODES,
+    MAX_UPLOAD_FILE_BYTES,
     REPO_ROOT,
+    SOURCE_BUNDLE_INDEX_PATH,
     SOURCE_COMMIT,
+    SOURCE_SHARD_MAX_BYTES,
     SUBMISSION_CONTRACT,
     export,
+    verify_source_bundle,
 )
+from huggingface_hub import DatasetCard
 from publish_private import publish_private
+
+EXPECTED_FEATURES = {
+    "task_id": {"dtype": "string", "_type": "Value"},
+    "source_commit": {"dtype": "string", "_type": "Value"},
+    "source_url": {"dtype": "string", "_type": "Value"},
+    "instruction": {"dtype": "string", "_type": "Value"},
+    "instruction_sha256": {"dtype": "string", "_type": "Value"},
+    "instruction_status": {"dtype": "string", "_type": "Value"},
+    "instruction_source_url": {"dtype": "string", "_type": "Value"},
+    "required_output_files": {
+        "feature": {"dtype": "string", "_type": "Value"},
+        "_type": "List",
+    },
+    "task_tree_json": {"dtype": "string", "_type": "Value"},
+    "metadata_json": {"dtype": "string", "_type": "Value"},
+    "submission_contract_json": {"dtype": "string", "_type": "Value"},
+    "evaluator_index_path": {"dtype": "string", "_type": "Value"},
+    "source_bundle_path": {"dtype": "string", "_type": "Value"},
+    "external_dependencies_json": {"dtype": "string", "_type": "Value"},
+    "self_contained": {"dtype": "bool", "_type": "Value"},
+    "scored": {"dtype": "bool", "_type": "Value"},
+}
 
 
 def _sha256(path: Path) -> str:
@@ -48,8 +71,8 @@ def _jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def verify_rows(output: Path) -> None:
-    test = pq.read_table(output / "data" / "test-00000-of-00001.parquet").to_pylist()
-    smoke = pq.read_table(output / "data" / "smoke-00000-of-00001.parquet").to_pylist()
+    test = _jsonl(output / "data" / "test.jsonl")
+    smoke = _jsonl(output / "data" / "smoke.jsonl")
     assert len(test) == EXPECTED_TEST_TASKS
     assert len(smoke) == EXPECTED_SMOKE_TASKS
     rows = test + smoke
@@ -57,7 +80,10 @@ def verify_rows(output: Path) -> None:
     assert [row["task_id"] for row in test] == sorted(row["task_id"] for row in test)
     assert smoke[0]["task_id"] == "smoke"
     assert all(row["source_commit"] == SOURCE_COMMIT for row in rows)
-    assert all(json.loads(row["submission_contract_json"]) == SUBMISSION_CONTRACT for row in rows)
+    assert all(
+        json.loads(row["submission_contract_json"]) == SUBMISSION_CONTRACT
+        for row in rows
+    )
 
     node_count = 0
     scored_node_count = 0
@@ -67,7 +93,9 @@ def verify_rows(output: Path) -> None:
         scored_node_count += len(nodes) if row["scored"] else 0
         assert nodes[0]["task_id"] == row["task_id"]
         assert [node["order"] for node in nodes] == list(range(len(nodes)))
-        assert row["required_output_files"] == [node["required_output_file"] for node in nodes]
+        assert row["required_output_files"] == [
+            node["required_output_file"] for node in nodes
+        ]
         names = {node["task_id"] for node in nodes}
         for node in nodes:
             assert node["parent_id"] is None or node["parent_id"] in names
@@ -91,7 +119,11 @@ def verify_rows(output: Path) -> None:
     }
     for row in rows:
         instruction = (
-            REPO_ROOT / "datasets" / "wandr" / row["task_id"].replace("_", "-") / "instruction.md"
+            REPO_ROOT
+            / "datasets"
+            / "wandr"
+            / row["task_id"].replace("_", "-")
+            / "instruction.md"
         ).read_bytes()
         assert row["instruction_sha256"] == hashlib.sha256(instruction).hexdigest()
         if row["instruction"] is not None:
@@ -139,24 +171,27 @@ def verify_assets(output: Path) -> None:
         artifact_bytes = artifact.read_bytes()
         assert all(artifact_bytes not in path.read_bytes() for path in package_files)
 
-    archive = output / "auxiliary" / "wandr-task-sources.tar.gz"
-    with tarfile.open(archive, "r:gz") as bundle:
-        names = bundle.getnames()
-        assert names == sorted(names)
-        for member in bundle.getmembers():
-            pure = PurePosixPath(member.name)
-            assert member.isfile()
-            assert not pure.is_absolute()
-            assert ".." not in pure.parts
-            assert "artifacts" not in pure.parts
-            assert member.mtime == 0
-            extracted = bundle.extractfile(member)
-            assert extracted is not None
-            assert_no_secrets(extracted.read(), member.name)
+    verify_source_bundle(output)
+    source_index = json.loads(
+        (output / SOURCE_BUNDLE_INDEX_PATH).read_text(encoding="utf-8")
+    )
+    bundled_paths = []
+    for shard in source_index["shards"]:
+        shard_path = output / shard["path"]
+        assert shard_path.stat().st_size < SOURCE_SHARD_MAX_BYTES
+        records = _jsonl(shard_path)
+        bundled_paths.extend(record["path"] for record in records)
+        for record in records:
+            assert_no_secrets(record["content"].encode("utf-8"), record["path"])
+            assert "artifacts" not in Path(record["path"]).parts
+    assert bundled_paths == sorted(bundled_paths)
+    assert len(bundled_paths) == 4_916
+    assert source_index["file_count"] == len(bundled_paths)
 
     source_manifest = _jsonl(output / "auxiliary" / "source-files.jsonl")
     assert all(
-        _sha256(REPO_ROOT / record["path"]) == record["sha256"] for record in source_manifest
+        _sha256(REPO_ROOT / record["path"]) == record["sha256"]
+        for record in source_manifest
     )
     evaluator = _jsonl(output / "evaluator" / "index.jsonl")
     assert len(evaluator) == EXPECTED_TREE_NODES
@@ -164,57 +199,57 @@ def verify_assets(output: Path) -> None:
     assert all(set(record["spec_paths"]).issubset(source_paths) for record in evaluator)
 
     for path in package_files:
+        path.read_text(encoding="utf-8", errors="strict")
+        assert path.stat().st_size < MAX_UPLOAD_FILE_BYTES
         assert_no_secrets(path.read_bytes(), path)
 
 
 def verify_card_and_stock_load(output: Path) -> None:
-    card = (output / "README.md").read_text(encoding="utf-8")
     metadata = DatasetCard.load(output / "README.md").data.to_dict()
     assert metadata["license"] == "other"
-    assert metadata["license_name"] == "Apache-2.0 for Perplexity-owned material; see NOTICE"
+    assert (
+        metadata["license_name"]
+        == "Apache-2.0 for Perplexity-owned material; see NOTICE"
+    )
     assert metadata["license_link"] == "LICENSE"
     assert "arxiv:2608.14747" in metadata["tags"]
+    assert "information-retrieval" in metadata["tags"]
+    assert metadata["task_categories"] == ["question-answering", "text-retrieval"]
     assert "arxiv" not in metadata
-
-    paper_section = card.index("## Paper and citation")
-    splits_section = card.index("## Splits")
-    assert paper_section < splits_section
-    for required in (
-        "path: data/test-00000-of-00001.parquet",
-        "path: data/smoke-00000-of-00001.parquet",
-        "https://arxiv.org/abs/2608.14747",
-        "official article",
-        SOURCE_COMMIT,
-        "free-form `answer` object",
-        "reference-free specifications",
-        "WANDR: A Benchmark for Wide and Deep Research",
-        "Vitaliy Polshkov, Marcin Pitera, Jeremy Yang, Kirill Priemko, Maksim Gaiduk, "
-        "Aleksandr Nikolenko, Denis Bykov, Clare Southern, Denis Yarats, Jerry Ma",
-        "https://doi.org/10.48550/arXiv.2608.14747",
-        "token=True",
-        'task["instruction"] is None',
-        'task["instruction_source_url"]',
-        "`excerpts` as a\nlist of strings",
-    ):
-        assert required in card
+    config = metadata["configs"][0]
+    assert config["data_files"] == [
+        {"split": "test", "path": "data/test.jsonl"},
+        {"split": "smoke", "path": "data/smoke.jsonl"},
+    ]
 
     citation = (output / "CITATION.bib").read_text(encoding="utf-8")
-    assert citation in card
     assert "doi={10.48550/arXiv.2608.14747}" in citation
     assert "author={Polshkov, Vitaliy and Pitera, Marcin and Yang, Jeremy" in citation
 
-    loaded_test = load_dataset(str(output), split="test")
-    loaded_smoke = load_dataset(str(output), split="smoke")
+    expected_test = _jsonl(output / "data" / "test.jsonl")
+    expected_smoke = _jsonl(output / "data" / "smoke.jsonl")
+    loaded = load_dataset(str(output))
+    assert set(loaded) == {"test", "smoke"}
+    loaded_test = loaded["test"]
+    loaded_smoke = loaded["smoke"]
     assert len(loaded_test) == EXPECTED_TEST_TASKS
     assert len(loaded_smoke) == EXPECTED_SMOKE_TASKS
+    assert loaded_test.to_list() == expected_test
+    assert loaded_smoke.to_list() == expected_smoke
+    assert loaded_test.features == loaded_smoke.features
+    assert loaded_test.features.to_dict() == EXPECTED_FEATURES
     streamed_test = load_dataset(str(output), split="test", streaming=True)
     streamed_smoke = load_dataset(str(output), split="smoke", streaming=True)
-    assert sum(1 for _ in streamed_test) == EXPECTED_TEST_TASKS
-    assert sum(1 for _ in streamed_smoke) == EXPECTED_SMOKE_TASKS
+    assert list(streamed_test) == expected_test
+    assert list(streamed_smoke) == expected_smoke
+    assert streamed_test.features == loaded_test.features
+    assert streamed_smoke.features == loaded_smoke.features
 
 
 def verify_manifest(output: Path) -> None:
-    manifest = json.loads((output / "release-manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (output / "release-manifest.json").read_text(encoding="utf-8")
+    )
     records = {record["path"]: record for record in manifest["files"]}
     expected_paths = {
         path.relative_to(output).as_posix()
@@ -263,6 +298,22 @@ def verify_private_publish_guard(output: Path) -> None:
     else:
         raise AssertionError("publish helper accepted a public repository")
     assert "upload_folder" not in [name for name, _ in public_api.calls]
+
+    with tempfile.TemporaryDirectory(prefix="wandr-hf-tampered-") as directory:
+        tampered = Path(directory) / "release"
+        shutil.copytree(output, tampered)
+        with (tampered / "README.md").open("a", encoding="utf-8") as card_file:
+            card_file.write("\n")
+        tampered_api = FakeHubApi([True, True])
+        try:
+            publish_private(tampered_api, tampered, "perplexity-ai/wandr")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(
+                "publish helper accepted a file with a mismatched hash"
+            )
+        assert tampered_api.calls == []
 
 
 def verify_determinism(output: Path) -> None:

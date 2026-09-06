@@ -636,7 +636,6 @@ dependencies = [
     { name = "huggingface-hub" },
     { name = "jinja2" },
     { name = "orjson" },
-    { name = "pyarrow" },
     { name = "pydantic" },
 ]
 
@@ -646,7 +645,6 @@ requires-dist = [
     { name = "huggingface-hub", specifier = "==0.35.3" },
     { name = "jinja2", specifier = "==3.1.6" },
     { name = "orjson", specifier = "==3.11.3" },
-    { name = "pyarrow", specifier = "==21.0.0" },
     { name = "pydantic", specifier = "==2.11.9" },
 ]
 

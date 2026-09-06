@@ -219,11 +219,12 @@ Task-source details live in
 ## Hugging Face Dataset Export
 
 The dataset-only Hugging Face release tooling lives in
-[`tools/hf_release/`](tools/hf_release/). It creates deterministic Parquet
-splits and rights-screened auxiliary sources from a pinned repository snapshot;
+[`tools/hf_release/`](tools/hf_release/). It creates deterministic JSONL splits
+and rights-screened, text-only source bundles from a pinned repository snapshot;
 it does not run benchmark tasks or paid evaluation. The publishing helper is
-private-only and verifies repository visibility before and after upload. See
-the release-tool README for generation, verification, and staging commands.
+private-only, verifies every manifest size and hash before upload, and checks
+repository visibility before and after upload. See the release-tool README for
+generation, verification, and staging commands.
 
 ## Data And Third-Party Sources
 
