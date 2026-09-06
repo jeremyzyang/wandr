@@ -207,10 +207,8 @@ def verify_assets(output: Path) -> None:
 def verify_card_and_stock_load(output: Path) -> None:
     metadata = DatasetCard.load(output / "README.md").data.to_dict()
     assert metadata["license"] == "other"
-    assert (
-        metadata["license_name"]
-        == "Apache-2.0 for Perplexity-owned material; see NOTICE"
-    )
+    assert metadata["license_name"] == "wandr-apache-2.0-with-third-party-notices"
+    assert re.fullmatch(r"[a-z0-9-.]+", metadata["license_name"])
     assert metadata["license_link"] == "LICENSE"
     assert "arxiv:2608.14747" in metadata["tags"]
     assert "information-retrieval" in metadata["tags"]

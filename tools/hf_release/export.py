@@ -474,7 +474,7 @@ def _dataset_card() -> str:
     return f'''---
 pretty_name: WANDR
 license: other
-license_name: Apache-2.0 for Perplexity-owned material; see NOTICE
+license_name: wandr-apache-2.0-with-third-party-notices
 license_link: LICENSE
 language:
 - en
