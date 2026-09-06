@@ -38,6 +38,21 @@ SOURCE_COMMIT = "ccb0baeb96f1c77a48e47f92122c57479ee99700"
 SOURCE_REPO = "https://github.com/perplexityai/wandr"
 HF_REPO_ID = "perplexity-ai/wandr"
 EXPORT_VERSION = "1"
+PAPER_TITLE = "WANDR: A Benchmark for Wide and Deep Research"
+PAPER_AUTHORS = (
+    "Vitaliy Polshkov",
+    "Marcin Pitera",
+    "Jeremy Yang",
+    "Kirill Priemko",
+    "Maksim Gaiduk",
+    "Aleksandr Nikolenko",
+    "Denis Bykov",
+    "Clare Southern",
+    "Denis Yarats",
+    "Jerry Ma",
+)
+ARXIV_ID = "2608.14747"
+PAPER_DOI = f"10.48550/arXiv.{ARXIV_ID}"
 EXPECTED_TEST_TASKS = 500
 EXPECTED_SMOKE_TASKS = 1
 EXPECTED_TREE_NODES = 609
@@ -85,6 +100,18 @@ ROW_SCHEMA = pa.schema(
         pa.field("scored", pa.bool_(), nullable=False),
     ]
 )
+
+CITATION_BIB = f"""@misc{{polshkov2026wandr,
+  title={{{PAPER_TITLE}}},
+  author={{Polshkov, Vitaliy and Pitera, Marcin and Yang, Jeremy and Priemko, Kirill and Gaiduk, Maksim and Nikolenko, Aleksandr and Bykov, Denis and Southern, Clare and Yarats, Denis and Ma, Jerry}},
+  year={{2026}},
+  eprint={{{ARXIV_ID}}},
+  archivePrefix={{arXiv}},
+  primaryClass={{cs.LG}},
+  doi={{{PAPER_DOI}}},
+  url={{https://arxiv.org/abs/{ARXIV_ID}}},
+}}
+"""
 
 
 def _json(value: Any) -> str:
@@ -372,9 +399,12 @@ def _write_parquet(path: Path, rows: list[dict[str, Any]]) -> None:
 
 
 def _dataset_card() -> str:
+    authors = ", ".join(PAPER_AUTHORS)
     return f'''---
 pretty_name: WANDR
 license: other
+license_name: Apache-2.0 for Perplexity-owned material; see NOTICE
+license_link: LICENSE
 language:
 - en
 task_categories:
@@ -384,7 +414,7 @@ tags:
 - research-agents
 - benchmark
 - web-research
-arxiv: '2608.14747'
+- arxiv:{ARXIV_ID}
 configs:
 - config_name: default
   data_files:
@@ -398,8 +428,8 @@ configs:
 
 WANDR (Wide ANd Deep Research) is a benchmark of 500 realistic, structured,
 high-volume web research tasks. This dataset is a task-and-verification corpus,
-not a question/answer collection: it contains no solver outputs and no fake gold
-answers. WANDR evaluation refetches cited pages and judges submitted records
+not a question/answer collection: it contains no solver outputs or reference
+answer sets. WANDR evaluation refetches cited pages and judges submitted records
 against task-specific, reference-free specifications.
 
 This private-staging export is pinned exactly to the public GitHub source
@@ -411,6 +441,18 @@ snapshot used for every result in the paper.
 See the [paper](https://arxiv.org/abs/2608.14747), the
 [official article](https://www.perplexity.ai/hub/blog/wandr-benchmark-evaluating-research-agents-that-must-search-wide-and-deep),
 and the [evaluation repository]({SOURCE_REPO}/tree/{SOURCE_COMMIT}).
+
+## Paper and citation
+
+**{PAPER_TITLE}** (2026)
+
+Authors, in publication order: {authors}.
+
+[arXiv:{ARXIV_ID}](https://arxiv.org/abs/{ARXIV_ID}) ·
+[DOI:{PAPER_DOI}](https://doi.org/{PAPER_DOI})
+
+Download [`CITATION.bib`](CITATION.bib), or copy the [BibTeX citation](#citation)
+below.
 
 ## Splits
 
@@ -425,7 +467,10 @@ instruction/task-text hashes.
 
 ## Loading
 
-No custom remote code or API key is needed to load or stream the dataset:
+While this dataset repository is private, loading or streaming requires a
+Hugging Face account with access. Authenticate first with `hf auth login`, then
+allow `datasets` to use that saved token. No paid inference or retrieval API
+keys are needed, and the dataset uses no custom remote code:
 
 ```python
 from datasets import load_dataset
@@ -433,13 +478,21 @@ from datasets import load_dataset
 tasks = load_dataset(
     "{HF_REPO_ID}",
     split="test",
-    revision="<release-tag-or-commit>",
+    revision="<private-release-tag-or-commit>",
+    token=True,
 )
 
 # Pass only solver-facing fields to an agent. Evaluator assets are not inputs.
+task = tasks[0]
+if task["instruction"] is None:
+    raise ValueError(
+        "Instruction text is withheld; review the pinned source under its applicable terms: "
+        + task["instruction_source_url"]
+    )
+
 solver_input = {{
-    "instruction": tasks[0]["instruction"],
-    "required_output_files": tasks[0]["required_output_files"],
+    "instruction": task["instruction"],
+    "required_output_files": task["required_output_files"],
 }}
 ```
 
@@ -448,9 +501,10 @@ strings (`task_tree_json`, `metadata_json`, `submission_contract_json`, and
 `external_dependencies_json`) so stock `datasets` can load one stable Parquet
 schema. Parse them with `json.loads`.
 
-Each submission JSONL row has an `item` object, HTTP(S) `url`, string
-`excerpts`, and a free-form `answer` object. The `answer` object intentionally
-has no fixed field vocabulary; each task defines the answer it asks for.
+Each submission JSONL row has an `item` object, HTTP(S) `url`, `excerpts` as a
+list of strings, and a free-form `answer` object. The `answer` object
+intentionally has no fixed field vocabulary; each task defines the answer it
+asks for.
 
 ## Evaluation specifications and sources
 
@@ -496,15 +550,7 @@ offline.
 ## Citation
 
 ```bibtex
-@misc{{polshkov2026wandr,
-  title={{WANDR: A Benchmark for Wide and Deep Research}},
-  author={{Polshkov, Vitaliy and Pitera, Marcin and Yang, Jeremy and Priemko, Kirill and Gaiduk, Maksim and Nikolenko, Aleksandr and Bykov, Denis and Southern, Clare and Yarats, Denis and Ma, Jerry}},
-  year={{2026}},
-  eprint={{2608.14747}},
-  archivePrefix={{arXiv}},
-  primaryClass={{cs.LG}},
-  url={{https://arxiv.org/abs/2608.14747}},
-}}
+{CITATION_BIB.rstrip()}
 ```
 '''
 
@@ -643,6 +689,7 @@ def export(output: Path) -> dict[str, Any]:
     _write_parquet(output / "data" / "smoke-00000-of-00001.parquet", smoke_rows)
     _write_jsonl(output / "evaluator" / "index.jsonl", evaluator_records)
     (output / "README.md").write_text(_dataset_card(), encoding="utf-8", newline="\n")
+    (output / "CITATION.bib").write_text(CITATION_BIB, encoding="utf-8", newline="\n")
     shutil.copyfile(REPO_ROOT / "LICENSE", output / "LICENSE")
     shutil.copyfile(REPO_ROOT / "NOTICE", output / "NOTICE")
     third_party = (

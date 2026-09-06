@@ -16,6 +16,7 @@ from typing import Any
 
 import pyarrow.parquet as pq
 from datasets import load_dataset
+from huggingface_hub import DatasetCard
 
 from export import (
     EXPECTED_SCORED_NODES,
@@ -168,6 +169,16 @@ def verify_assets(output: Path) -> None:
 
 def verify_card_and_stock_load(output: Path) -> None:
     card = (output / "README.md").read_text(encoding="utf-8")
+    metadata = DatasetCard.load(output / "README.md").data.to_dict()
+    assert metadata["license"] == "other"
+    assert metadata["license_name"] == "Apache-2.0 for Perplexity-owned material; see NOTICE"
+    assert metadata["license_link"] == "LICENSE"
+    assert "arxiv:2608.14747" in metadata["tags"]
+    assert "arxiv" not in metadata
+
+    paper_section = card.index("## Paper and citation")
+    splits_section = card.index("## Splits")
+    assert paper_section < splits_section
     for required in (
         "path: data/test-00000-of-00001.parquet",
         "path: data/smoke-00000-of-00001.parquet",
@@ -176,8 +187,21 @@ def verify_card_and_stock_load(output: Path) -> None:
         SOURCE_COMMIT,
         "free-form `answer` object",
         "reference-free specifications",
+        "WANDR: A Benchmark for Wide and Deep Research",
+        "Vitaliy Polshkov, Marcin Pitera, Jeremy Yang, Kirill Priemko, Maksim Gaiduk, "
+        "Aleksandr Nikolenko, Denis Bykov, Clare Southern, Denis Yarats, Jerry Ma",
+        "https://doi.org/10.48550/arXiv.2608.14747",
+        "token=True",
+        'task["instruction"] is None',
+        'task["instruction_source_url"]',
+        "`excerpts` as a\nlist of strings",
     ):
         assert required in card
+
+    citation = (output / "CITATION.bib").read_text(encoding="utf-8")
+    assert citation in card
+    assert "doi={10.48550/arXiv.2608.14747}" in citation
+    assert "author={Polshkov, Vitaliy and Pitera, Marcin and Yang, Jeremy" in citation
 
     loaded_test = load_dataset(str(output), split="test")
     loaded_smoke = load_dataset(str(output), split="smoke")
@@ -187,6 +211,21 @@ def verify_card_and_stock_load(output: Path) -> None:
     streamed_smoke = load_dataset(str(output), split="smoke", streaming=True)
     assert sum(1 for _ in streamed_test) == EXPECTED_TEST_TASKS
     assert sum(1 for _ in streamed_smoke) == EXPECTED_SMOKE_TASKS
+
+
+def verify_manifest(output: Path) -> None:
+    manifest = json.loads((output / "release-manifest.json").read_text(encoding="utf-8"))
+    records = {record["path"]: record for record in manifest["files"]}
+    expected_paths = {
+        path.relative_to(output).as_posix()
+        for path in output.rglob("*")
+        if path.is_file() and path.name != "release-manifest.json"
+    }
+    assert set(records) == expected_paths
+    for relative_path, record in records.items():
+        path = output / relative_path
+        assert record["size"] == path.stat().st_size
+        assert record["sha256"] == _sha256(path)
 
 
 class FakeHubApi:
@@ -246,6 +285,7 @@ def main() -> int:
     verify_rows(output)
     verify_assets(output)
     verify_card_and_stock_load(output)
+    verify_manifest(output)
     verify_private_publish_guard(output)
     verify_determinism(output)
     shutil.rmtree(output / "cache", ignore_errors=True)
